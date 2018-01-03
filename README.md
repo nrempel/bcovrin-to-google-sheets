@@ -4,7 +4,7 @@
 
 1. Install `pipenv` from https://github.com/pypa/pipenv
 
-2. Run `pipenv install google-api-python-client`
+2. Run `pipenv install requests google-api-python-client`
 
 3. Use this link [https://console.developers.google.com/start/api?id=sheets.googleapis.com] to enable Google Sheets API access and create a new service account key in JSON format. Rename the file 'client_secret.json' and add it to this directory.
 
