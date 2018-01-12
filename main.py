@@ -58,18 +58,64 @@ def update_sheets():
         sequence_number = ledger_entry[0]
         content = ledger_entry[1]
 
-        body = {
-            'values': [[
-                # str(item[1]) for item in sorted(content.items())
-                str(content[key]) if key in content else ""
-                for key in TYPE_KEY_MAP[content['type']]
-            ]]
-        }
+        # Get the type
+        entity_type = content['type']
 
-        print('-Sending entry to Google Sheets-')
-        print('Range: Type%s!%s:%s' % (
-            content['type'], sequence_number, sequence_number))
-        print('Body: ' + str(body))
+        # Handle each type differently
+        if entity_type == "1":
+            # This ledger item is an identity
+
+            # For each of the attributes in this data type,
+            # extract the value into a variable. If the attribute
+            # isn't found in the data, use "" instead so that
+            # program doesn't exit with an error
+
+            dest = content['dest'] if 'dest' in content else ""
+            role = content['role'] if 'role' in content else ""
+            verkey = content['verkey'] if 'verkey' in content else ""
+            identifier = content['identifier'] if 'identifier' in content else ""
+
+            # We can transform the data as needed here. For example, if we wanted to
+            # change the role number into a human readable role name we could do:
+
+            # This should probably be at the top of the file if you use this.
+            ROLE_MAP = {
+                "0": "Trustee",
+                "2": "Steward",
+                "101": "Trust Anchor"
+            }
+
+            label = 'did: %s' % dest
+            role_name = ROLE_MAP[role] if role in ROLE_MAP else "No Role"
+
+            # We build a row in the spreadsheet. We can have as many columns as we want
+            # for each row. Each entry in the array is a new column.
+
+            # Here we can use our transformed data and create new rows as needed!
+            row = [label, role_name]
+
+        elif entity_type == "101":
+            # This ledger item is a schema
+            pass
+        elif entity_type == "102":
+            # This ledger item is a claim definition
+            pass
+
+        # We build the expected request format using the row above
+        body = {'values': [row]}
+        
+        # body = {
+        #     'values': [[
+        #         # str(item[1]) for item in sorted(content.items())
+        #         str(content[key]) if key in content else ""
+        #         for key in TYPE_KEY_MAP[content['type']]
+        #     ]]
+        # }
+
+        # print('-Sending entry to Google Sheets-')
+        # print('Range: Type%s!%s:%s' % (
+        #     content['type'], sequence_number, sequence_number))
+        # print('Body: ' + str(body))
 
         # Write ledger entries
         service.spreadsheets().values().update(
