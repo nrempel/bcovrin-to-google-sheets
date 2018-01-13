@@ -7,18 +7,19 @@ import os
 import requests
 from apiclient import discovery
 
-TYPE_KEY_MAP = {
-    "1": ["dest", "identifier", "role", "type", "verkey"],
-    "101": ["data", "identifier", "reqId", "signature", "txnTime"],
-    "102": [
-        "data",
-        "identifier",
-        "ref",
-        "reqId",
-        "signature",
-        "signature_type",
-        "txnTime"
-    ]
+ELEMENTS_HEADERS = ['Label', 'Type', 'Tags', 'Description']
+CONNECTIONS_HEADERS = ['From', 'To', 'Label', 'Type', 'Tags', 'Description']
+
+TYPE_MAP = {
+    "1": "Identity",
+    "101": "Schema",
+    "102": "Claim Definition"
+}
+
+ROLE_MAP = {
+    "0": "Trustee",
+    "2": "Steward",
+    "101": "Trust Anchor"
 }
 
 
@@ -35,104 +36,152 @@ def update_sheets():
     service = discovery.build(
         'sheets', 'v4', http=http_auth, discoveryServiceUrl=discoveryUrl)
 
-    # Write headers
-    for record_type in TYPE_KEY_MAP:
-        body = {'values': [
-            TYPE_KEY_MAP[record_type]
-        ]}
+    # We will use 2 worksheets:
+    # Elements and Connections
 
-        service.spreadsheets().values().update(
-            spreadsheetId=spreadsheetId,
-            range='Type%s!1:1' % (record_type),
-            body=body,
-            valueInputOption="RAW").execute()
+    # Write elements headers
+    body = {'values': [ELEMENTS_HEADERS]}
+    service.spreadsheets().values().update(
+        spreadsheetId=spreadsheetId,
+        range='Elements!1:1',
+        body=body,
+        valueInputOption="RAW").execute()
+
+    # Write connections headers
+    body = {'values': [CONNECTIONS_HEADERS]}
+    service.spreadsheets().values().update(
+        spreadsheetId=spreadsheetId,
+        range='Connections!1:1',
+        body=body,
+        valueInputOption="RAW").execute()
 
     # Get ledger data from BCOVRIN
     ledger_response = requests.get('http://138.197.170.136/ledger/domain')
+
+    # We iterate over the data 2 times.
+    # The first time, we write all elements of all types.
+    # The second time, iterate over each element and compare
+    # it to every other element in order to create the relationships
+    # in a nested loop.
+
+    # First we iterate entire data set and create elements
+    row_num = 1
     for line in ledger_response.text.split('\n'):
+        row_num += 1
         try:
             ledger_entry = json.loads(line)
-        except json.decoder.JSONDecodeError:
+        except:
+            # Just ignore json decode errors for now
             continue
 
         sequence_number = ledger_entry[0]
         content = ledger_entry[1]
 
-        # Get the type
-        entity_type = content['type']
+        # Let's extract some data from the ledger content
 
-        # Handle each type differently
-        if entity_type == "1":
-            # This ledger item is an identity
+        # For the label we use the 'dest' attribute. But if that doesn't
+        # exist, let's use sequence number instead.
+        Label = content['dest'] if 'dest' in content else sequence_number
+        type_number = content['type'] if 'type' in content else ""
+        # We want the human-readable type name
+        Type = TYPE_MAP[type_number]
+        Description = str(content['data']) if 'data' in content else ""
 
-            # For each of the attributes in this data type,
-            # extract the value into a variable. If the attribute
-            # isn't found in the data, use "" instead so that
-            # program doesn't exit with an error
+        # Now we write this row two the "Elements" worksheet
+        # using row_num as the google sheets row
 
-            dest = content['dest'] if 'dest' in content else ""
-            role = content['role'] if 'role' in content else ""
-            verkey = content['verkey'] if 'verkey' in content else ""
-            identifier = content['identifier'] if 'identifier' in content else ""
+        # We use empty strings to make empty cells
+        # to make sure we match the format of ELEMENTS_HEADERS
+        entity_row = [Label, Type, "", Description]
 
-            # We can transform the data as needed here. For example, if we wanted to
-            # change the role number into a human readable role name we could do:
+        body = {'values': [entity_row]}
 
-            # This should probably be at the top of the file if you use this.
-            ROLE_MAP = {
-                "0": "Trustee",
-                "2": "Steward",
-                "101": "Trust Anchor"
-            }
-
-            label = 'did: %s' % dest
-            role_name = ROLE_MAP[role] if role in ROLE_MAP else "No Role"
-
-            # We build a row in the spreadsheet. We can have as many columns as we want
-            # for each row. Each entry in the array is a new column.
-
-            # Here we can use our transformed data and create new rows as needed!
-            row = [label, role_name]
-
-        elif entity_type == "101":
-            # This ledger item is a schema
-            pass
-        elif entity_type == "102":
-            # This ledger item is a claim definition
-            pass
-
-        # We build the expected request format using the row above
-        body = {'values': [row]}
-        
-        # body = {
-        #     'values': [[
-        #         # str(item[1]) for item in sorted(content.items())
-        #         str(content[key]) if key in content else ""
-        #         for key in TYPE_KEY_MAP[content['type']]
-        #     ]]
-        # }
-
-        # print('-Sending entry to Google Sheets-')
-        # print('Range: Type%s!%s:%s' % (
-        #     content['type'], sequence_number, sequence_number))
-        # print('Body: ' + str(body))
+        print('-Sending entry to Google Sheets-')
+        print('Elements!%s:%s' % (row_num, row_num))
+        print('Body: ' + str(body))
 
         # Write ledger entries
         service.spreadsheets().values().update(
           spreadsheetId=spreadsheetId,
-          range='Type%s!%s:%s' % (
-            content['type'], sequence_number+1, sequence_number+1),
+          range='Elements!%s:%s' % (row_num, row_num),
           body=body,
           valueInputOption="RAW").execute()
 
         # Avoid rate limiting
-        time.sleep(0.2)
+        time.sleep(0.5)
+
+    # Second, we iterate over every ledger entry and
+    # compare to all other ledger entries
+    row_num = 1
+    for line in ledger_response.text.split('\n'):
+        try:
+            ledger_entry = json.loads(line)
+        except:
+            # Just ignore json decode errors for now
+            continue
+
+        current_element = ledger_entry[1]
+
+        for line in ledger_response.text.split('\n'):
+            try:
+                ledger_entry = json.loads(line)
+            except:
+                # Just ignore json decode errors for now
+                continue
+
+            compared_element = ledger_entry[1]
+            compared_element_sequence_number = ledger_entry[0]
+
+            current_element_type = current_element['type']
+
+            current_element_dest = current_element['dest'] \
+                if 'dest' in current_element else ""
+            compared_element_identifier = compared_element['identifier'] \
+                if 'identifier' in compared_element else ""
+
+            # Let's compare the "dest" attribute of the current element
+            # to the "identifier" element to the currently compared element.
+            # If they are the same, then they are related! If that is the case,
+            # we create a new relationship of that type
+
+            # Let's handle relationships for "identifier" relationship
+            if current_element_dest == compared_element_identifier:
+                row_num += 1
+                # The compared element's label is its 'dest'
+                compared_element_dest = compared_element['dest'] \
+                    if 'dest' in compared_element else ""
+
+                From = current_element_dest
+                To = compared_element_dest or compared_element_sequence_number
+
+                # Let's make sure this matches the header format for this
+                # sheet
+                connections_row = [From, To, "", "Identity/Entity", "", ""]
+
+                body = {'values': [connections_row]}
+
+                print('-Sending entry to Google Sheets-')
+                print('Elements!%s:%s' % (row_num, row_num))
+                print('Body: ' + str(body))
+
+                # Write ledger entries
+                service.spreadsheets().values().update(
+                  spreadsheetId=spreadsheetId,
+                  range='Connections!%s:%s' % (row_num, row_num),
+                  body=body,
+                  valueInputOption="RAW").execute()
+
+                # Avoid rate limiting
+                time.sleep(0.5)
+
+            # TODO: handle other relationship types
+            # elif ...
 
 
 def main():
     while(True):
         update_sheets()
-        time.sleep(60)
+        time.sleep(300)
 
 
 if __name__ == '__main__':
